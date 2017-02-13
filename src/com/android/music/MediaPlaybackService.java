@@ -1299,11 +1299,7 @@ public class MediaPlaybackService extends Service {
         sendStickyBroadcast(i);
 
         if (what.equals(PLAYSTATE_CHANGED)) {
-            long pos = (mPlayer != null) ? position() : 0;
-            if (pos < 0) pos = 0;
-            mRemoteControlClient.setPlaybackState((isPlaying() ?
-                    RemoteControlClient.PLAYSTATE_PLAYING : RemoteControlClient.PLAYSTATE_PAUSED),
-                    pos, PLAYBACK_SPEED_1X);
+            updatePlaybackState(false);
         } else if (what.equals(META_CHANGED)) {
             RemoteControlClient.MetadataEditor ed = mRemoteControlClient.editMetadata(true);
             ed.putString(MediaMetadataRetriever.METADATA_KEY_TITLE, getTrackName());
@@ -1580,6 +1576,7 @@ public class MediaPlaybackService extends Service {
             if (mPlayListLen == 0) {
                 return;
             }
+            updatePlaybackState(true);
             stop(false);
 
             mCurrentTrackInfo = getTrackInfoFromId(mPlayList[mPlayPos]);
@@ -1762,12 +1759,12 @@ public class MediaPlaybackService extends Service {
 
         if (mAudioManager == null) {
             mAudioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            mAudioManager.registerRemoteControlClient(mRemoteControlClient);
         }
         mAudioManager.requestAudioFocus(mAudioFocusListener, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN);
         mAudioManager.registerMediaButtonEventReceiver(new ComponentName(this.getPackageName(),
                 MediaButtonIntentReceiver.class.getName()));
-        mAudioManager.registerRemoteControlClient(mRemoteControlClient);
 
         if (mPlayer.isInitialized()) {
             // if we are at the end of the song, playing it again.
@@ -1790,12 +1787,7 @@ public class MediaPlaybackService extends Service {
                 mIsSupposedToBePlaying = true;
                 notifyChange(PLAYSTATE_CHANGED);
             } else {
-                long pos = (mPlayer != null) ? position() : 0;
-                if (pos < 0) pos = 0;
-                mRemoteControlClient.setPlaybackState((isPlaying() ?
-                        RemoteControlClient.PLAYSTATE_PLAYING :
-                        RemoteControlClient.PLAYSTATE_PAUSED),
-                        pos, PLAYBACK_SPEED_1X);
+                updatePlaybackState(false);
             }
             updateNotification();
 
@@ -2980,6 +2972,11 @@ public class MediaPlaybackService extends Service {
             public void onPrepared(MediaPlayer mp){
                 Log.d(LOGTAG, "next MediaPlayer Prepared");
 
+                if (mp != null && mp == mCurrentMediaPlayer) {
+                    Log.d(LOGTAG, "Ignore to set next MediaPlayer as self");
+                    return;
+                }
+
                 if (mCurrentMediaPlayer != mp
                         && mIsSupposedToBePlaying
                         && mCurrentMediaPlayer != null
@@ -3113,6 +3110,7 @@ public class MediaPlaybackService extends Service {
         MediaPlayer.OnCompletionListener listener = new MediaPlayer.OnCompletionListener() {
             public void onCompletion(MediaPlayer mp) {
                 mIsComplete = true;
+                updatePlaybackState(false);
                 if (mp == mCurrentMediaPlayer && mNextMediaPlayer != null) {
                     if (mPlayPos == mNextPlayPos) {
                         mCurrentTrackInfo = getTrackInfoFromId(mPlayList[mNextPlayPos]);
@@ -3198,7 +3196,11 @@ public class MediaPlaybackService extends Service {
         }
 
         public void setVolume(float vol) {
-            mCurrentMediaPlayer.setVolume(vol, vol);
+            try {
+                mCurrentMediaPlayer.setVolume(vol, vol);
+            } catch (Exception e) {
+                Log.d(LOGTAG, "setVolume failed: " + e);
+            }
         }
 
         public void setAudioSessionId(int sessionId) {
@@ -3390,4 +3392,19 @@ public class MediaPlaybackService extends Service {
     }
 
     private final IBinder mBinder = new ServiceStub(this);
+
+    private void updatePlaybackState(boolean pause) {
+        long pos = (mPlayer != null) ? position() : 0;
+        if (pos < 0) pos = 0;
+
+        int state = RemoteControlClient.PLAYSTATE_PAUSED;
+        if (pause) {
+            state = RemoteControlClient.PLAYSTATE_PAUSED;
+        } else {
+            state = isPlaying() ?
+                    RemoteControlClient.PLAYSTATE_PLAYING :
+                    RemoteControlClient.PLAYSTATE_PAUSED;
+        }
+        mRemoteControlClient.setPlaybackState(state, pos, PLAYBACK_SPEED_1X);
+    }
 }
